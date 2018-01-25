@@ -1,0 +1,504 @@
+﻿<html>
+	<head>
+		<script src="work.json"></script>
+		<script>
+			//A visualization of how work hours were spent, based on project or work type
+			//
+			//Data stored in JSON format:
+			//	Date
+			//	Time Start	-	Start time in 12HR clock
+			//	Time End	-	End time in 12HR clock
+			//	Time Taken	-	Half hour blocks
+			//	Project	-	Project name or descriptor
+			//	Type of Work	-	The type of work by task
+			
+			var workyear = "2017"; //What is the year we display?
+			
+			var maxWidth = 1024; //Max canvas width
+			var maxHeight = 600; //Max canvas height
+						
+			//Data that we will store for use in legend
+			var canvasLegendWidth = 270; //Width of the legend/options on the right?
+			var minpadding = 12; //Used to place text along edges
+			
+			var titleFont = "bold 24px Arial"; //The font for the title
+			var titleColor = "white"; //Fill color of title
+			
+			var legendFont = "bold 18px Arial"; //The font for the legend box title
+			var legendColor = "white"; //Fill color of all legend box text
+			
+			var displayProjects = false; //Default to project view first
+			
+			var switchBox = {"X":16, "Y":565, "W":24, "H":24, "Checked":false}; //A checkbox object for switching between display projects and display worktypes
+						
+			var legendX = 32; //How far from the edge of the legend to start the list of toggles?
+			var legendY = 34; //How far down from top to start the list of toggles?
+			
+			var legendItemColor = "white"; //Text of ignored projects/work types
+			var legendItemFont = "bold 14px Arial"; //Text font for projects/work types in legend
+			
+			var toggleWidth = 16; //Togle button width
+			var toggleHeight = 16; //Toggle button height
+			var toggleSpacingX = 12; //X distance between checkbox edge and text
+			var toggleSpacingY = 8; //Y distance between toggleSpacing
+			
+			var projectlegend = []; //Not wiped, this stores the projects as strings
+			var worktypelegend = []; //Not wiped, this stores the work types as strings
+			
+			//We filter the data by both projects and worktypes when preparing it
+			var ignoreprojects = []; //Projects to ignore?
+			var ignoreworktypes = []; //Work types to ignore?
+			
+			//We use dynamic arrays to store the sorted and processed data
+			var projects = []; //Store the projects worked on
+			var projectcolors = []; //Hue from HSL color for each project
+			
+			var worktypes = []; //Store the types of work for later sorting
+			var worktypecolors = []; //Hue from HSL color for each work type
+			
+			var hoursperproject = []; //Store the hours per project			
+			var hoursperworktype = []; //Store the hours spent on each work type
+			
+			var projectpercentages = []; //Store the hours in percentage (0 - 100) for each project
+			var worktypepercentages = []; //Store the hours in percentage (0 - 100) for each worktype
+			
+			var totalhours = 0; //How many hours total?
+			
+			//Store the size of the pie chart
+			var pieRadius = 280; //How big is the radius of the pie?
+			
+			function setup() {
+				canvas = document.getElementById("mycanvas");
+				ctx = canvas.getContext("2d");
+				
+				//Mouse variables
+				mouseX = 0;
+				mouseY = 0;
+				wasMouseDown = false;
+				mouseDown = false;
+				
+				//Set up mouse reactions
+				canvas.onmousedown = respondToMouseDown;
+				canvas.onmousemove = respondToMouseMove;
+				canvas.onmouseup = respondToMouseUp;
+				
+				//Build legend for later use to turn on/off features
+				prepareLegend();
+				
+				//Pre-prepare the data for display, based on the JSON data
+				prepareData();
+				
+				//Set up refresh screen timer to display the data and allow interaction to appear
+				myInterval = setInterval(function() { refreshScreen(); }, 500); //Every 500ms run refreshScreen
+			}
+			
+			function prepareLegend() {
+				//Sort the data once at start, to make it easier to work with later (at roughly 2fps!)
+				//data[0] through to data[data.length - 1] (in this case, 653)
+				//Date: in dd/mm/yyyy format (unused)
+				//Time start in h:mm:ss AM/PM format (unused)
+				//Time end in h:mm:ss AM/PM format (unused)
+				//Time taken in 0.5 increments (rounded)
+				//Project string
+				//Type of work string
+				//	Example Types of work:
+				//	--------------
+				//		Bug Testing
+				//		Documentation
+				//		Meetings
+				//		Presentation
+				//		Programming
+				//		Research
+				//		Server
+				//		Skype Call
+				//		Video Editing
+				//		Website
+				
+				for (var i = 0; i < data.length; i++) {
+					var obj = data[i];
+					if (projectlegend.indexOf(obj["Project"]) == -1) {
+						//We don't have this project yet
+						projectlegend.push(obj["Project"]); //Add it to list
+					}
+					
+					if (worktypelegend.indexOf(obj["Type of Work"]) == -1) {
+						//We don't have this work type yet
+						if (obj["Type of Work"] == undefined) console.log(i);
+						worktypelegend.push(obj["Type of Work"]);
+					}
+				}
+			}
+			
+			function prepareData() {
+				totalhours = 0; //Reset total hours count
+				
+				//We actually do clear the ignores depending on the view the user is in, to make the process less mystical, and take up less legend space
+				if (displayProjects) {
+					ignoreworktypes = [];
+				} else {
+					ignoreprojects = [];
+				}
+				
+				//Clear the arrays, to be re-filled if this is called again
+				projects = []; //Store the projects worked on
+				projectcolors = []; //Hue from HSL color for each project
+				worktypes = []; //Store the types of work for later sorting
+				worktypecolors = []; //Hue from HSL color for each work type
+				hoursperproject = []; //Store the hours per project			
+				hoursperworktype = []; //Store the hours spent on each work type
+				projectpercentages = []; //Store the hours in percentage (0 - 100) for each project
+				worktypepercentages = []; //Store the hours in percentage (0 - 100) for each worktype
+				
+				for (var i = 0; i < data.length; i++) {
+					var obj = data[i];
+					
+					//Using the square bracket method of object instead of . due to spaces in the properties "Type of Work" and "Time Taken"
+					var canSaveProject = true; //Can we save this project?
+					var canSaveWorktype = true; //Can we save this work type?
+					
+					if (ignoreprojects.indexOf(obj["Project"]) != -1) {
+						canSaveProject = false; //Actually we ignore this project type
+					}
+					
+					if (ignoreworktypes.indexOf(obj["Type of Work"]) != -1) {
+						canSaveWorktype = false; //Actually we ignore this work type
+					}
+					
+					if(canSaveProject && canSaveWorktype) {
+						//If we can actually count this data piece
+						if (projects.indexOf(obj["Project"]) == -1) {
+							//We don't have this project yet
+							projects.push(obj["Project"]); //Add it to list
+							hoursperproject.push(0); //Default to 0 hours
+						}
+						
+						if (worktypes.indexOf(obj["Type of Work"]) == -1) {
+							//We don't have this work type yet
+							worktypes.push(obj["Type of Work"]);
+							hoursperworktype.push(0); //Default to 0 hours
+						}
+						
+						//Store the index of these existing types of project and work in memory
+						var projIndex = projects.indexOf(obj["Project"]);
+						var workIndex = worktypes.indexOf(obj["Type of Work"]);
+						
+						//Add the hours to the totals
+						var time = obj["Time Taken"];
+						
+							//If this is a valid type of work, we can count it
+							hoursperproject[projIndex] = hoursperproject[projIndex] + time;
+							hoursperworktype[workIndex] = hoursperworktype[workIndex] + time;
+							
+							totalhours = totalhours + time; //Add the time
+						}
+				}
+				
+				//Now that we've loaded our arrays, we can calculate percentages per pie slice for both charts, and give them colors
+				for (var i = 0; i < projects.length; i++) {
+					var percent = (hoursperproject[i] / totalhours) * 100.0;
+					
+					projectpercentages.push(percent);
+					
+					var hue = i * (360.0 / projects.length);
+					projectcolors.push(hue);
+				}
+				
+				for (var i = 0; i < worktypes.length; i++) {
+					var percent = (hoursperworktype[i] / totalhours) * 100.0;
+					
+					worktypepercentages.push(percent);
+					
+					var hue = i * (360.0 / worktypes.length);
+					worktypecolors.push(hue);
+				}
+				
+			}
+			
+			function respondToMouseDown(ev) {
+				mouseDown = true;
+				updateMouse(ev);
+				
+				checkInput(); //Check for user input affecting the app
+			}
+			
+			function respondToMouseMove(ev) {
+				updateMouse(ev);
+			}
+			
+			function respondToMouseUp(ev) {
+				mouseDown = false;
+				updateMouse(ev);
+			}
+			
+			function updateMouse(ev) {
+				//Update mouse position variables
+				mouseX = ev.clientX - canvas.offsetLeft;
+				mouseY = ev.clientY - canvas.offsetTop;
+
+				if (!mouseDown) {
+					wasMouseDown = false;
+				}
+			}
+			
+			function checkInput() {
+				//Respond to user input
+				if (mouseX > maxWidth - canvasLegendWidth && mouseDown && !wasMouseDown) {
+					//We're clicking within the options / legend space, check if we click on our switch view button
+					var switchX = maxWidth - canvasLegendWidth + switchBox["X"]; //Fancy extra calculations so legend can be adjusted
+					
+					var optionSelected = false; //Something clicked?
+					
+					if (mouseX > switchX && mouseX < switchX + switchBox["W"]) {
+						//Within the X bounds
+						if (mouseY > switchBox["Y"] && mouseY < switchBox["Y"] + switchBox["H"]) {
+							//Within the Y bounds, that's a click!
+							displayProjects = !displayProjects; //Flip our bool
+							optionSelected = true;
+						}
+					}
+					
+					if (!optionSelected) {
+						//Still here? Check if the user has changed what we ignore!
+						var edgeX = maxWidth - canvasLegendWidth + legendX;
+						
+						if (mouseX > edgeX && mouseX < edgeX + toggleWidth) {
+							//Within the X bounds of the buttons!
+							if (displayProjects) {
+								//We are enabling / disabling a project name
+								
+								for (var i = 0; i < projectlegend.length; i++) {
+									var isIgnored = false;
+									var ignoreIndex = ignoreprojects.indexOf(projectlegend[i]);
+									
+									if (ignoreIndex != -1) isIgnored = true; //This is currently ignored, we will need to pop it off the stack later
+									
+									var posY = legendY + (toggleHeight * i) + (toggleSpacingY * i); //Get the Y of this box and check if we're within it
+									
+									if (mouseY > posY && mouseY < posY + toggleHeight) {
+										//Within Y bounds! This is a click!
+										if (isIgnored) {
+											//We pop something out of the ignore list
+											ignoreprojects.splice(ignoreIndex, 1); //Remove the ignored part
+										} else {
+											//We add something into the ignore list
+											ignoreprojects.push(projectlegend[i]);
+										}
+										optionSelected = true; //Time to update the data!
+									}
+								}
+							}
+							else {
+								//We are enabling / disabling a work type
+								for (var i = 0; i < worktypelegend.length; i++) {
+									var isIgnored = false;
+									var ignoreIndex = ignoreworktypes.indexOf(worktypelegend[i]);
+									
+									if (ignoreIndex != -1) isIgnored = true; //This is currently ignored, we will need to pop it off the stack later
+									
+									var posY = legendY + (toggleHeight * i) + (toggleSpacingY * i); //Get the Y of this box and check if we're within it
+									
+									if (mouseY > posY && mouseY < posY + toggleHeight) {
+										//Within Y bounds! This is a click!
+										if (isIgnored) {
+											//We pop something out of the ignore list
+											ignoreworktypes.splice(ignoreIndex, 1); //Remove the ignored part
+										} else {
+											//We add something into the ignore list
+											ignoreworktypes.push(worktypelegend[i]);
+										}
+										optionSelected = true; //Time to update the data!
+									}
+								}
+							}
+						}
+					}
+					
+					if (optionSelected) {
+						//We selected something here! Better re-prep data just in case!
+						prepareData();
+					}
+										
+					wasMouseDown = true;
+				}
+			}
+			
+			function checkBox(x, y, w, h, isChecked) {
+				//Helper function to draw a checkbox
+				ctx.fillStyle = "white";
+				ctx.fillRect(x, y, w, h);
+				
+				ctx.lineWidth = 2;
+				ctx.strokeStyle = "black";
+				ctx.strokeRect(x, y, w, h);
+				
+				if (isChecked) {
+					ctx.fillStyle = "hsla(220, 100%, 57%, 1)";
+					ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
+					
+					ctx.lineWidth = 2;
+					ctx.strokeStyle = "black";
+					ctx.strokeRect(x + 5, y + 5, w - 10, h - 10);
+				}
+			}
+			
+			function pieSlice(x, y, start, end, r) {
+				//draw a pie slice around x and y with start % of a circle, end % of a circle, and radius
+				var startAng = (start / 100.0) * (Math.PI * 2); //We expect our start as a ratio between 0% and 100%
+				var endAng = (end / 100.0) * (Math.PI * 2) //We expect our end as a ratio between 0% and 100%
+				
+				ctx.beginPath();
+				ctx.moveTo(x,y);
+				ctx.arc(x, y, r, startAng, endAng);
+				ctx.closePath();
+				ctx.fill();
+				
+				ctx.lineWidth = 1;
+				ctx.strokeStyle = "black";
+				ctx.stroke();
+			}
+			
+			function drawLegend() {
+				//Draws the legend box as well as the title
+				
+				var title = "Hours Worked By Project " + workyear;
+				
+				if (!displayProjects) {
+					title = "Hours Worked By Type " + workyear;
+				}
+				
+				//Draw title
+				ctx.fillStyle = titleColor;
+				ctx.font = titleFont;
+				ctx.fillText(title, minpadding, minpadding * 2);
+				
+				//Now legend box			
+				ctx.fillStyle = "hsla(220, 100%, 8%, 1)";
+				ctx.fillRect(maxWidth - canvasLegendWidth, 0, canvasLegendWidth, maxHeight);
+			
+				//Draw legend title
+				ctx.fillStyle = legendColor;
+				ctx.font = legendFont;
+				ctx.fillText("Legend", maxWidth - canvasLegendWidth/1.6, minpadding * 2);
+				
+				//Draw the checkboxes and titles for each of the type
+				var edgeX = maxWidth - canvasLegendWidth + legendX;
+				
+				if (displayProjects) {
+					//Displaying by project name
+					for (var i = 0; i < projectlegend.length; i++) {
+						var isNotIgnored = true;
+						
+						if (ignoreprojects.indexOf(projectlegend[i]) != -1) isNotIgnored = false;
+						
+						//Draw the checkbox
+						var posY = legendY + (toggleHeight * i) + (toggleSpacingY * i);
+						checkBox(edgeX, posY, toggleWidth, toggleHeight, isNotIgnored);
+						
+						//Draw the text
+						ctx.font = legendItemFont;
+						ctx.fillStyle = legendItemColor;
+						hourstext = "";
+						if (isNotIgnored) 
+						{
+							var indexofproj = projects.indexOf(projectlegend[i]);
+							ctx.fillStyle = "hsla(" + projectcolors[indexofproj] + ",100%,50%,0.8)"; //We colorize the text to show it's not ignored
+							hourstext = " (H:" + hoursperproject[indexofproj] + ")";
+						}
+						
+						ctx.fillText(projectlegend[i] + hourstext, edgeX + toggleWidth + toggleSpacingX, posY + toggleHeight/1.5);
+					}
+				}
+				else {
+					//Displaying by work type
+					for (var i = 0; i < worktypelegend.length; i++) {
+						var isNotIgnored = true;
+						
+						if (ignoreworktypes.indexOf(worktypelegend[i]) != -1) isNotIgnored = false;
+						
+						//Draw the checkbox
+						var posY = legendY + (toggleHeight * i) + (toggleSpacingY * i);
+						checkBox(edgeX, posY, toggleWidth, toggleHeight, isNotIgnored);
+						
+						//Draw the text
+						ctx.font = legendItemFont;
+						ctx.fillStyle = legendItemColor;
+						hourstext = "";
+						
+						if (isNotIgnored) 
+						{
+							var indexofwt = worktypes.indexOf(worktypelegend[i]);
+							ctx.fillStyle = "hsla(" + worktypecolors[indexofwt] + ",100%,50%,0.8)"; //We colorize the text to show it's not ignored
+							hourstext = " (H:" + hoursperworktype[indexofwt] + ")";
+						}
+						
+						ctx.fillText(worktypelegend[i] + hourstext, edgeX + toggleWidth + toggleSpacingX, posY + toggleHeight/1.5);
+					}
+				}
+				
+				//Draw the checkbox for changing display type
+				var switchX = maxWidth - canvasLegendWidth + switchBox["X"];
+				checkBox(switchX, switchBox["Y"], switchBox["W"], switchBox["H"], switchBox["Checked"]); //Draw the switch box
+				
+				var switchTextY = switchBox["Y"] + switchBox["H"]/1.25;
+				ctx.fillStyle = legendColor;
+				ctx.font = legendFont;
+				ctx.fillText("Display By Projects", switchX + switchBox["W"] + toggleSpacingX, switchTextY);
+				
+				//Draw total hours
+				if (ignoreprojects.length + ignoreworktypes.length == 0) {
+					//Nothing ignored, showing total hours
+					ctx.fillText("Total Hours: " + totalhours, maxWidth - canvasLegendWidth*1.7, maxHeight - minpadding);
+				} else {
+					ctx.fillText("Filtered Hours: " + totalhours, maxWidth - canvasLegendWidth*1.75, maxHeight - minpadding);
+				}
+			}
+			
+			function refreshScreen() {
+				//The "main program loop"
+				ctx.clearRect(0,0,maxWidth,maxHeight);
+				
+				switchBox["Checked"] = displayProjects; //Store the value to the checkbox				
+				
+				drawLegend(); //Draw our legend
+				
+				displayData(); //Draw our pie chart
+			}
+			
+			function displayData()
+			{
+				if (displayProjects) {
+					//We're displaying the pie chart of our projects
+					var nextStart = 0; //Start angle for next?
+					for (var i = 0; i < projects.length; i++) {
+						var end = nextStart + projectpercentages[i];
+						
+						//Grab the color and draw its pie slice
+						ctx.fillStyle = "hsla(" + projectcolors[i] + ",100%,50%,0.8)";
+						pieSlice(maxWidth/2.65, maxHeight/1.95, nextStart, end, pieRadius);
+						
+						nextStart = end; //The next one continues from here
+					}
+				}
+				else {
+					//We're displaying the pie chart of our work types
+					var nextStart = 0; //Start angle for next?
+					for (var i = 0; i < worktypes.length; i++) {
+						var end = nextStart + worktypepercentages[i];
+						
+						//Draw the color and draw its pie slice
+						ctx.fillStyle = "hsla(" + worktypecolors[i] + ",100%,50%,0.8)";
+						pieSlice(maxWidth/2.65, maxHeight/1.95, nextStart, end, pieRadius);
+						
+						nextStart = end; //The next one continues from here
+					}
+				}
+			}
+			
+			
+		
+		</script>
+	</head>
+	<body onload="setup();">
+	<canvas width="1024" height="600" style="background-color:hsla(220, 100%, 26%, 1);" id="mycanvas"></canvas>
+	</body>
+</html>
